@@ -1,0 +1,1408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Road Detection System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f4f8;
+        }
+        
+        .video-feed {
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            background-color: #000;
+        }
+        
+        .detection-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        .detection-point {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            background-color: rgba(255, 0, 0, 0.7);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        
+        .detection-line {
+            position: absolute;
+            height: 2px;
+            background-color: rgba(255, 255, 0, 0.7);
+            transform-origin: left center;
+        }
+        
+        .road-segment {
+            position: absolute;
+            background-color: rgba(0, 255, 0, 0.2);
+            border: 2px solid rgba(0, 255, 0, 0.5);
+        }
+        
+        .control-panel {
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+        
+        .btn {
+            transition: all 0.2s ease;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; }
+            100% { opacity: 0.6; }
+        }
+        
+        .scanning {
+            animation: pulse 1.5s infinite;
+        }
+        
+        .data-card {
+            transition: all 0.3s ease;
+        }
+        
+        .data-card.highlight {
+            transform: scale(1.05);
+        }
+        
+        .road-canvas {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        
+        .vehicle {
+            position: absolute;
+            width: 20px;
+            height: 40px;
+            background-color: #3b82f6;
+            border-radius: 4px;
+            transform-origin: center center;
+        }
+        
+        .obstacle {
+            position: absolute;
+            width: 15px;
+            height: 15px;
+            background-color: #ef4444;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        
+        .notification {
+            position: absolute;
+            padding: 8px 12px;
+            background-color: rgba(239, 68, 68, 0.9);
+            color: white;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            transform: translate(-50%, -50%);
+            z-index: 100;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .fps-counter {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .log-entry {
+            transition: all 0.3s ease;
+        }
+        
+        .log-entry.new {
+            background-color: rgba(59, 130, 246, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="min-h-screen flex flex-col">
+        <header class="bg-gradient-to-r from-blue-600 to-indigo-700 text-white py-4 px-6">
+            <div class="container mx-auto flex justify-between items-center">
+                <div class="flex items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 mr-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M16 6l3 4-3 4M8 6L5 10l3 4M12 3v18"></path>
+                    </svg>
+                    <h1 class="text-2xl font-bold">Real-Time Road Detection System</h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="flex items-center space-x-2">
+                        <span id="status-dot" class="h-3 w-3 bg-green-400 rounded-full"></span>
+                        <span id="status-text" class="text-sm font-medium">System Active</span>
+                    </div>
+                    <div class="text-sm px-3 py-1 bg-blue-500 rounded-full">
+                        <span id="time-counter">00:00:00</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <main class="flex-grow container mx-auto px-4 py-8">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div class="lg:col-span-2">
+                    <div class="bg-white rounded-xl overflow-hidden">
+                        <div class="p-4 bg-gray-800 text-white flex justify-between items-center">
+                            <h2 class="font-medium">Live Road Detection</h2>
+                            <div class="flex items-center space-x-4">
+                                <div class="flex items-center space-x-2">
+                                    <span id="processing-indicator" class="h-2 w-2 rounded-full bg-green-400 scanning"></span>
+                                    <span id="processing-text" class="text-sm">Processing</span>
+                                </div>
+                                <select id="view-mode" class="bg-gray-700 text-white text-sm rounded px-2 py-1 border-none">
+                                    <option value="normal">Normal View</option>
+                                    <option value="edge">Edge Detection</option>
+                                    <option value="segment">Segmentation</option>
+                                    <option value="depth">Depth Map</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="video-feed h-[400px] relative">
+                            <canvas id="roadCanvas" class="road-canvas"></canvas>
+                            <div id="detectionOverlay" class="detection-overlay"></div>
+                            <div id="fps-counter" class="fps-counter">0 FPS</div>
+                        </div>
+                        
+                        <div class="p-4 bg-gray-100">
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div id="road-width-card" class="data-card bg-blue-50 p-3 rounded-lg">
+                                    <div class="text-blue-600 text-sm font-medium">Road Width</div>
+                                    <div id="road-width" class="text-xl font-bold">0.0m</div>
+                                </div>
+                                <div id="curvature-card" class="data-card bg-green-50 p-3 rounded-lg">
+                                    <div class="text-green-600 text-sm font-medium">Curvature</div>
+                                    <div id="curvature" class="text-xl font-bold">0.0°</div>
+                                </div>
+                                <div id="speed-card" class="data-card bg-purple-50 p-3 rounded-lg">
+                                    <div class="text-purple-600 text-sm font-medium">Speed Limit</div>
+                                    <div id="speed-limit" class="text-xl font-bold">--</div>
+                                </div>
+                                <div id="confidence-card" class="data-card bg-amber-50 p-3 rounded-lg">
+                                    <div class="text-amber-600 text-sm font-medium">Confidence</div>
+                                    <div id="confidence" class="text-xl font-bold">0%</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-6 bg-white rounded-xl p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-lg font-semibold">System Log</h2>
+                            <button id="clear-log" class="text-sm text-gray-500 hover:text-gray-700">Clear</button>
+                        </div>
+                        <div id="log-container" class="h-[150px] overflow-y-auto text-sm">
+                            <div class="log-entry p-2 border-b border-gray-100">
+                                <span class="text-gray-500">[00:00:00]</span> System initialized
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="control-panel p-6">
+                    <h2 class="text-xl font-bold mb-6">Control Panel</h2>
+                    
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium mb-2">Simulation Mode</label>
+                        <select id="simulation-mode" class="w-full p-2 border rounded-lg bg-gray-50">
+                            <option value="highway">Highway</option>
+                            <option value="urban">Urban Street</option>
+                            <option value="rural">Rural Road</option>
+                            <option value="intersection">Intersection</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium mb-2">Traffic Density</label>
+                        <div class="flex space-x-2">
+                            <button data-density="low" class="density-btn flex-1 py-2 border rounded-lg bg-gray-50 hover:bg-gray-100">Low</button>
+                            <button data-density="medium" class="density-btn flex-1 py-2 border rounded-lg bg-blue-100 border-blue-500">Medium</button>
+                            <button data-density="high" class="density-btn flex-1 py-2 border rounded-lg bg-gray-50 hover:bg-gray-100">High</button>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium mb-2">Weather Conditions</label>
+                        <select id="weather-condition" class="w-full p-2 border rounded-lg bg-gray-50">
+                            <option value="clear">Clear</option>
+                            <option value="rain">Rain</option>
+                            <option value="fog">Fog</option>
+                            <option value="night">Night</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium mb-2">Detection Sensitivity</label>
+                        <input type="range" id="sensitivity" min="1" max="10" value="7" class="w-full">
+                        <div class="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>Low</span>
+                            <span>High</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium mb-2">Processing Speed</label>
+                        <input type="range" id="processing-speed" min="1" max="10" value="5" class="w-full">
+                        <div class="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>Slow</span>
+                            <span>Fast</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium mb-2">Detection Features</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="flex items-center p-2 border rounded-lg">
+                                <input type="checkbox" id="lane-detection" checked class="mr-2">
+                                Lane Detection
+                            </label>
+                            <label class="flex items-center p-2 border rounded-lg">
+                                <input type="checkbox" id="obstacle-detection" checked class="mr-2">
+                                Obstacle Detection
+                            </label>
+                            <label class="flex items-center p-2 border rounded-lg">
+                                <input type="checkbox" id="sign-detection" checked class="mr-2">
+                                Sign Detection
+                            </label>
+                            <label class="flex items-center p-2 border rounded-lg">
+                                <input type="checkbox" id="vehicle-tracking" checked class="mr-2">
+                                Vehicle Tracking
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="pt-4 border-t">
+                        <button id="start-btn" class="btn w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700">
+                            Pause Simulation
+                        </button>
+                        <button id="reset-btn" class="btn w-full mt-3 py-3 border border-gray-300 rounded-lg font-medium hover:bg-gray-50">
+                            Reset Simulation
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+        
+        <footer class="bg-gray-800 text-white py-4 px-6">
+            <div class="container mx-auto text-center text-sm">
+                <p>Real-Time Road Detection System Demo | For visualization purposes only</p>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // DOM Elements
+        const roadCanvas = document.getElementById('roadCanvas');
+        const ctx = roadCanvas.getContext('2d');
+        const detectionOverlay = document.getElementById('detectionOverlay');
+        const fpsCounter = document.getElementById('fps-counter');
+        const startBtn = document.getElementById('start-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const simulationMode = document.getElementById('simulation-mode');
+        const viewMode = document.getElementById('view-mode');
+        const weatherCondition = document.getElementById('weather-condition');
+        const sensitivity = document.getElementById('sensitivity');
+        const processingSpeed = document.getElementById('processing-speed');
+        const laneDetection = document.getElementById('lane-detection');
+        const obstacleDetection = document.getElementById('obstacle-detection');
+        const signDetection = document.getElementById('sign-detection');
+        const vehicleTracking = document.getElementById('vehicle-tracking');
+        const roadWidth = document.getElementById('road-width');
+        const curvature = document.getElementById('curvature');
+        const speedLimit = document.getElementById('speed-limit');
+        const confidence = document.getElementById('confidence');
+        const logContainer = document.getElementById('log-container');
+        const clearLog = document.getElementById('clear-log');
+        const timeCounter = document.getElementById('time-counter');
+        
+        // State
+        let isRunning = true;
+        let currentMode = 'highway';
+        let currentDensity = 'medium';
+        let currentWeather = 'clear';
+        let currentViewMode = 'normal';
+        let vehicles = [];
+        let obstacles = [];
+        let detectionPoints = [];
+        let roadSegments = [];
+        let laneLines = [];
+        let fps = 0;
+        let frameCount = 0;
+        let lastTime = performance.now();
+        let elapsedTime = 0;
+        let roadCurvature = 0;
+        let currentRoadWidth = 8.2;
+        let currentConfidence = 95;
+        let currentSpeedLimit = 65;
+        let animationId = null;
+        let lastLogTime = 0;
+        
+        // Initialize
+        function init() {
+            resizeCanvas();
+            setupEventListeners();
+            resetSimulation();
+            startSimulation();
+            updateTimer();
+        }
+        
+        // Resize canvas to match container
+        function resizeCanvas() {
+            const container = roadCanvas.parentElement;
+            roadCanvas.width = container.clientWidth;
+            roadCanvas.height = container.clientHeight;
+        }
+        
+        // Setup event listeners
+        function setupEventListeners() {
+            window.addEventListener('resize', resizeCanvas);
+            
+            startBtn.addEventListener('click', function() {
+                if (isRunning) {
+                    pauseSimulation();
+                } else {
+                    startSimulation();
+                }
+            });
+            
+            resetBtn.addEventListener('click', resetSimulation);
+            
+            simulationMode.addEventListener('change', function() {
+                currentMode = this.value;
+                resetSimulation();
+                addLogEntry(`Switched to ${currentMode} simulation mode`);
+            });
+            
+            viewMode.addEventListener('change', function() {
+                currentViewMode = this.value;
+                addLogEntry(`View mode changed to ${currentViewMode}`);
+            });
+            
+            weatherCondition.addEventListener('change', function() {
+                currentWeather = this.value;
+                addLogEntry(`Weather condition changed to ${currentWeather}`);
+            });
+            
+            document.querySelectorAll('.density-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    document.querySelectorAll('.density-btn').forEach(b => {
+                        b.classList.remove('bg-blue-100', 'border-blue-500');
+                        b.classList.add('bg-gray-50');
+                    });
+                    this.classList.remove('bg-gray-50');
+                    this.classList.add('bg-blue-100', 'border-blue-500');
+                    currentDensity = this.dataset.density;
+                    addLogEntry(`Traffic density set to ${currentDensity}`);
+                });
+            });
+            
+            clearLog.addEventListener('click', function() {
+                logContainer.innerHTML = '';
+                addLogEntry('Log cleared');
+            });
+            
+            // Add event listeners for checkboxes
+            laneDetection.addEventListener('change', function() {
+                addLogEntry(`Lane detection ${this.checked ? 'enabled' : 'disabled'}`);
+            });
+            
+            obstacleDetection.addEventListener('change', function() {
+                addLogEntry(`Obstacle detection ${this.checked ? 'enabled' : 'disabled'}`);
+            });
+            
+            signDetection.addEventListener('change', function() {
+                addLogEntry(`Sign detection ${this.checked ? 'enabled' : 'disabled'}`);
+            });
+            
+            vehicleTracking.addEventListener('change', function() {
+                addLogEntry(`Vehicle tracking ${this.checked ? 'enabled' : 'disabled'}`);
+            });
+        }
+        
+        // Start simulation
+        function startSimulation() {
+            if (isRunning) return;
+            
+            isRunning = true;
+            startBtn.textContent = 'Pause Simulation';
+            startBtn.classList.remove('bg-green-600', 'hover:bg-green-700');
+            startBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+            
+            document.getElementById('status-dot').classList.add('bg-green-400');
+            document.getElementById('status-dot').classList.remove('bg-yellow-400');
+            document.getElementById('status-text').textContent = 'System Active';
+            
+            addLogEntry('Simulation started');
+            
+            // Start animation loop
+            animate();
+        }
+        
+        // Pause simulation
+        function pauseSimulation() {
+            if (!isRunning) return;
+            
+            isRunning = false;
+            startBtn.textContent = 'Resume Simulation';
+            startBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+            startBtn.classList.add('bg-green-600', 'hover:bg-green-700');
+            
+            document.getElementById('status-dot').classList.remove('bg-green-400');
+            document.getElementById('status-dot').classList.add('bg-yellow-400');
+            document.getElementById('status-text').textContent = 'System Paused';
+            
+            addLogEntry('Simulation paused');
+            
+            // Stop animation loop
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+        }
+        
+        // Reset simulation
+        function resetSimulation() {
+            // Clear all arrays
+            vehicles = [];
+            obstacles = [];
+            detectionPoints = [];
+            roadSegments = [];
+            laneLines = [];
+            
+            // Reset metrics
+            roadCurvature = 0;
+            currentConfidence = 95;
+            
+            // Set up road based on mode
+            setupRoad();
+            
+            // Add vehicles
+            addVehicles();
+            
+            // Add obstacles
+            if (currentMode === 'urban' || currentMode === 'rural') {
+                addObstacles();
+            }
+            
+            // Clear detection overlay
+            detectionOverlay.innerHTML = '';
+            
+            // Reset timer
+            elapsedTime = 0;
+            
+            addLogEntry('Simulation reset');
+            
+            // If not running, start
+            if (!isRunning) {
+                startSimulation();
+            }
+        }
+        
+        // Setup road based on mode
+        function setupRoad() {
+            switch (currentMode) {
+                case 'highway':
+                    currentRoadWidth = 12.5;
+                    currentSpeedLimit = 65;
+                    break;
+                case 'urban':
+                    currentRoadWidth = 8.2;
+                    currentSpeedLimit = 30;
+                    break;
+                case 'rural':
+                    currentRoadWidth = 7.0;
+                    currentSpeedLimit = 45;
+                    break;
+                case 'intersection':
+                    currentRoadWidth = 10.0;
+                    currentSpeedLimit = 25;
+                    break;
+            }
+            
+            // Update UI
+            roadWidth.textContent = `${currentRoadWidth.toFixed(1)}m`;
+            speedLimit.textContent = `${currentSpeedLimit} mph`;
+        }
+        
+        // Add vehicles based on density
+        function addVehicles() {
+            const count = {
+                'low': 3,
+                'medium': 6,
+                'high': 10
+            }[currentDensity];
+            
+            for (let i = 0; i < count; i++) {
+                addVehicle();
+            }
+        }
+        
+        // Add a single vehicle
+        function addVehicle() {
+            const width = roadCanvas.width;
+            const height = roadCanvas.height;
+            
+            let x, y, angle;
+            
+            if (currentMode === 'highway' || currentMode === 'rural') {
+                // Vehicles on straight road
+                x = width * 0.2 + Math.random() * (width * 0.6);
+                y = Math.random() * height;
+                angle = 0;
+            } else if (currentMode === 'urban') {
+                // Vehicles with some variation
+                x = width * 0.2 + Math.random() * (width * 0.6);
+                y = Math.random() * height;
+                angle = (Math.random() - 0.5) * 20;
+            } else if (currentMode === 'intersection') {
+                // Vehicles on horizontal or vertical road
+                if (Math.random() > 0.5) {
+                    // Horizontal
+                    x = Math.random() * width;
+                    y = height * 0.4 + Math.random() * (height * 0.2);
+                    angle = 90;
+                } else {
+                    // Vertical
+                    x = width * 0.4 + Math.random() * (width * 0.2);
+                    y = Math.random() * height;
+                    angle = 0;
+                }
+            }
+            
+            const vehicle = document.createElement('div');
+            vehicle.className = 'vehicle';
+            vehicle.style.left = `${x}px`;
+            vehicle.style.top = `${y}px`;
+            vehicle.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+            
+            // Random vehicle color
+            const colors = ['#3b82f6', '#10b981', '#f59e0b', '#6366f1', '#8b5cf6'];
+            vehicle.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+            
+            detectionOverlay.appendChild(vehicle);
+            
+            vehicles.push({
+                element: vehicle,
+                x,
+                y,
+                angle,
+                speed: 1 + Math.random() * 2,
+                id: Math.random().toString(36).substr(2, 9)
+            });
+        }
+        
+        // Add obstacles
+        function addObstacles() {
+            const count = currentMode === 'urban' ? 5 : 3;
+            
+            for (let i = 0; i < count; i++) {
+                const width = roadCanvas.width;
+                const height = roadCanvas.height;
+                
+                const x = Math.random() * width;
+                const y = Math.random() * height;
+                
+                const obstacle = document.createElement('div');
+                obstacle.className = 'obstacle';
+                obstacle.style.left = `${x}px`;
+                obstacle.style.top = `${y}px`;
+                
+                detectionOverlay.appendChild(obstacle);
+                
+                obstacles.push({
+                    element: obstacle,
+                    x,
+                    y,
+                    detected: false
+                });
+            }
+        }
+        
+        // Animation loop
+        function animate() {
+            if (!isRunning) return;
+            
+            // Calculate FPS
+            frameCount++;
+            const now = performance.now();
+            const elapsed = now - lastTime;
+            
+            if (elapsed >= 1000) {
+                fps = Math.round((frameCount * 1000) / elapsed);
+                frameCount = 0;
+                lastTime = now;
+                fpsCounter.textContent = `${fps} FPS`;
+                
+                // Update elapsed time
+                elapsedTime += elapsed / 1000;
+            }
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, roadCanvas.width, roadCanvas.height);
+            
+            // Draw road based on mode and view mode
+            drawRoad();
+            
+            // Update vehicles
+            updateVehicles();
+            
+            // Update detection
+            updateDetection();
+            
+            // Check for obstacle detection
+            if (obstacleDetection.checked) {
+                checkObstacleDetection();
+            }
+            
+            // Update metrics with some variation
+            updateMetrics();
+            
+            // Add periodic log entries
+            if (elapsedTime - lastLogTime >= 5) {
+                addRandomLogEntry();
+                lastLogTime = elapsedTime;
+            }
+            
+            // Continue animation loop
+            animationId = requestAnimationFrame(animate);
+        }
+        
+        // Draw road based on mode and view mode
+        function drawRoad() {
+            const width = roadCanvas.width;
+            const height = roadCanvas.height;
+            
+            // Apply weather effects
+            applyWeatherEffect();
+            
+            if (currentMode === 'highway') {
+                drawHighway();
+            } else if (currentMode === 'urban') {
+                drawUrbanRoad();
+            } else if (currentMode === 'rural') {
+                drawRuralRoad();
+            } else if (currentMode === 'intersection') {
+                drawIntersection();
+            }
+        }
+        
+        // Apply weather effects
+        function applyWeatherEffect() {
+            const width = roadCanvas.width;
+            const height = roadCanvas.height;
+            
+            if (currentWeather === 'rain') {
+                // Draw rain effect
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+                ctx.fillRect(0, 0, width, height);
+                
+                ctx.strokeStyle = 'rgba(200, 200, 255, 0.8)';
+                ctx.lineWidth = 1;
+                
+                for (let i = 0; i < 100; i++) {
+                    const x = Math.random() * width;
+                    const y = Math.random() * height;
+                    const length = 10 + Math.random() * 10;
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x - length / 2, y + length);
+                    ctx.stroke();
+                }
+            } else if (currentWeather === 'fog') {
+                // Draw fog effect
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.fillRect(0, 0, width, height);
+            } else if (currentWeather === 'night') {
+                // Draw night effect
+                ctx.fillStyle = 'rgba(0, 0, 20, 0.7)';
+                ctx.fillRect(0, 0, width, height);
+            }
+        }
+        
+        // Draw highway
+        function drawHighway() {
+            const width = roadCanvas.width;
+            const height = roadCanvas.height;
+            
+            // Road background
+            ctx.fillStyle = '#555';
+            ctx.fillRect(0, 0, width, height);
+            
+            // Lane markings
+            const laneWidth = width / 4;
+            
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 4;
+            ctx.setLineDash([20, 20]);
+            
+            for (let i = 1; i < 4; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * laneWidth, 0);
+                ctx.lineTo(i * laneWidth, height);
+                ctx.stroke();
+            }
+            
+            // Road edges
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(0, height);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(width, 0);
+            ctx.lineTo(width, height);
+            ctx.stroke();
+            
+            // Apply view mode effects
+            applyViewModeEffects();
+        }
+        
+        // Draw urban road
+        function drawUrbanRoad() {
+            const width = roadCanvas.width;
+            const height = roadCanvas.height;
+            
+            // Road background
+            ctx.fillStyle = '#555';
+            ctx.fillRect(width * 0.1, 0, width * 0.8, height);
+            
+            // Sidewalks
+            ctx.fillStyle = '#999';
+            ctx.fillRect(0, 0, width * 0.1, height);
+            ctx.fillRect(width * 0.9, 0, width * 0.1, height);
+            
+            // Lane markings
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 4;
+            ctx.setLineDash([20, 20]);
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.5, 0);
+            ctx.lineTo(width * 0.5, height);
+            ctx.stroke();
+            
+            // Road edges
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(width * 0.1, 0);
+            ctx.lineTo(width * 0.1, height);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.9, 0);
+            ctx.lineTo(width * 0.9, height);
+            ctx.stroke();
+            
+            // Crosswalks
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#fff';
+            
+            for (let i = 0; i < 2; i++) {
+                const y = height * 0.3 + i * height * 0.4;
+                
+                for (let j = 0; j < 8; j++) {
+                    ctx.fillRect(width * 0.1 + j * width * 0.1, y - 10, width * 0.05, 20);
+                }
+            }
+            
+            // Apply view mode effects
+            applyViewModeEffects();
+        }
+        
+        // Draw rural road
+        function drawRuralRoad() {
+            const width = roadCanvas.width;
+            const height = roadCanvas.height;
+            
+            // Background (grass)
+            ctx.fillStyle = '#4a7c59';
+            ctx.fillRect(0, 0, width, height);
+            
+            // Road with curve
+            ctx.fillStyle = '#555';
+            ctx.beginPath();
+            ctx.moveTo(width * 0.3, 0);
+            ctx.quadraticCurveTo(width * 0.7, height * 0.5, width * 0.3, height);
+            ctx.lineTo(width * 0.7, height);
+            ctx.quadraticCurveTo(width * 1.1, height * 0.5, width * 0.7, 0);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Center line
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 4;
+            ctx.setLineDash([20, 20]);
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.5, 0);
+            ctx.quadraticCurveTo(width * 0.9, height * 0.5, width * 0.5, height);
+            ctx.stroke();
+            
+            // Road edges
+            ctx.setLineDash([]);
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.3, 0);
+            ctx.quadraticCurveTo(width * 0.7, height * 0.5, width * 0.3, height);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.7, 0);
+            ctx.quadraticCurveTo(width * 1.1, height * 0.5, width * 0.7, height);
+            ctx.stroke();
+            
+            // Apply view mode effects
+            applyViewModeEffects();
+        }
+        
+        // Draw intersection
+        function drawIntersection() {
+            const width = roadCanvas.width;
+            const height = roadCanvas.height;
+            
+            // Background
+            ctx.fillStyle = '#4a7c59';
+            ctx.fillRect(0, 0, width, height);
+            
+            // Horizontal road
+            ctx.fillStyle = '#555';
+            ctx.fillRect(0, height * 0.35, width, height * 0.3);
+            
+            // Vertical road
+            ctx.fillRect(width * 0.35, 0, width * 0.3, height);
+            
+            // Lane markings
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 4;
+            ctx.setLineDash([20, 20]);
+            
+            // Horizontal lane marking
+            ctx.beginPath();
+            ctx.moveTo(0, height * 0.5);
+            ctx.lineTo(width * 0.35, height * 0.5);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.65, height * 0.5);
+            ctx.lineTo(width, height * 0.5);
+            ctx.stroke();
+            
+            // Vertical lane marking
+            ctx.beginPath();
+            ctx.moveTo(width * 0.5, 0);
+            ctx.lineTo(width * 0.5, height * 0.35);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.5, height * 0.65);
+            ctx.lineTo(width * 0.5, height);
+            ctx.stroke();
+            
+            // Road edges
+            ctx.setLineDash([]);
+            
+            // Horizontal road edges
+            ctx.beginPath();
+            ctx.moveTo(0, height * 0.35);
+            ctx.lineTo(width, height * 0.35);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(0, height * 0.65);
+            ctx.lineTo(width, height * 0.65);
+            ctx.stroke();
+            
+            // Vertical road edges
+            ctx.beginPath();
+            ctx.moveTo(width * 0.35, 0);
+            ctx.lineTo(width * 0.35, height);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.65, 0);
+            ctx.lineTo(width * 0.65, height);
+            ctx.stroke();
+            
+            // Stop lines
+            ctx.lineWidth = 8;
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.35 - 10, height * 0.35);
+            ctx.lineTo(width * 0.35 - 10, height * 0.65);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.65 + 10, height * 0.35);
+            ctx.lineTo(width * 0.65 + 10, height * 0.65);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.35, height * 0.35 - 10);
+            ctx.lineTo(width * 0.65, height * 0.35 - 10);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(width * 0.35, height * 0.65 + 10);
+            ctx.lineTo(width * 0.65, height * 0.65 + 10);
+            ctx.stroke();
+            
+            // Apply view mode effects
+            applyViewModeEffects();
+        }
+        
+        // Apply view mode effects
+        function applyViewModeEffects() {
+            const width = roadCanvas.width;
+            const height = roadCanvas.height;
+            
+            if (currentViewMode === 'edge') {
+                // Edge detection view
+                const imageData = ctx.getImageData(0, 0, width, height);
+                const data = imageData.data;
+                
+                // Simple edge detection
+                for (let y = 1; y < height - 1; y++) {
+                    for (let x = 1; x < width - 1; x++) {
+                        const idx = (y * width + x) * 4;
+                        const idxLeft = (y * width + (x - 1)) * 4;
+                        const idxRight = (y * width + (x + 1)) * 4;
+                        const idxUp = ((y - 1) * width + x) * 4;
+                        const idxDown = ((y + 1) * width + x) * 4;
+                        
+                        const gx = 
+                            -1 * data[idxLeft] + 
+                            1 * data[idxRight];
+                        
+                        const gy = 
+                            -1 * data[idxUp] + 
+                            1 * data[idxDown];
+                        
+                        const g = Math.sqrt(gx * gx + gy * gy);
+                        
+                        data[idx] = g;
+                        data[idx + 1] = g;
+                        data[idx + 2] = g;
+                    }
+                }
+                
+                ctx.putImageData(imageData, 0, 0);
+            } else if (currentViewMode === 'segment') {
+                // Segmentation view
+                ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+                
+                if (currentMode === 'highway') {
+                    ctx.fillRect(0, 0, width, height);
+                } else if (currentMode === 'urban') {
+                    ctx.fillRect(width * 0.1, 0, width * 0.8, height);
+                } else if (currentMode === 'rural') {
+                    ctx.beginPath();
+                    ctx.moveTo(width * 0.3, 0);
+                    ctx.quadraticCurveTo(width * 0.7, height * 0.5, width * 0.3, height);
+                    ctx.lineTo(width * 0.7, height);
+                    ctx.quadraticCurveTo(width * 1.1, height * 0.5, width * 0.7, 0);
+                    ctx.closePath();
+                    ctx.fill();
+                } else if (currentMode === 'intersection') {
+                    ctx.fillRect(0, height * 0.35, width, height * 0.3);
+                    ctx.fillRect(width * 0.35, 0, width * 0.3, height);
+                }
+            } else if (currentViewMode === 'depth') {
+                // Depth map view
+                const gradient = ctx.createLinearGradient(0, 0, 0, height);
+                gradient.addColorStop(0, 'rgba(0, 0, 255, 0.7)');
+                gradient.addColorStop(1, 'rgba(255, 0, 0, 0.7)');
+                
+                ctx.fillStyle = gradient;
+                
+                if (currentMode === 'highway') {
+                    ctx.fillRect(0, 0, width, height);
+                } else if (currentMode === 'urban') {
+                    ctx.fillRect(width * 0.1, 0, width * 0.8, height);
+                } else if (currentMode === 'rural') {
+                    ctx.beginPath();
+                    ctx.moveTo(width * 0.3, 0);
+                    ctx.quadraticCurveTo(width * 0.7, height * 0.5, width * 0.3, height);
+                    ctx.lineTo(width * 0.7, height);
+                    ctx.quadraticCurveTo(width * 1.1, height * 0.5, width * 0.7, 0);
+                    ctx.closePath();
+                    ctx.fill();
+                } else if (currentMode === 'intersection') {
+                    ctx.fillRect(0, height * 0.35, width, height * 0.3);
+                    ctx.fillRect(width * 0.35, 0, width * 0.3, height);
+                }
+            }
+        }
+        
+        // Update vehicles
+        function updateVehicles() {
+            const width = roadCanvas.width;
+            const height = roadCanvas.height;
+            
+            vehicles.forEach((vehicle, index) => {
+                let newX = vehicle.x;
+                let newY = vehicle.y;
+                
+                if (currentMode === 'highway' || currentMode === 'urban') {
+                    // Move up
+                    newY -= vehicle.speed;
+                    
+                    // Loop back when out of view
+                    if (newY < -20) {
+                        newY = height + 20;
+                        newX = width * 0.2 + Math.random() * (width * 0.6);
+                    }
+                } else if (currentMode === 'rural') {
+                    // Follow curved path
+                    newY -= vehicle.speed;
+                    
+                    // Adjust x based on curve
+                    const progress = newY / height;
+                    const curveOffset = Math.sin(progress * Math.PI) * width * 0.2;
+                    newX = width * 0.5 + curveOffset;
+                    
+                    // Loop back when out of view
+                    if (newY < -20) {
+                        newY = height + 20;
+                        newX = width * 0.5;
+                    }
+                    
+                    // Update angle based on curve
+                    vehicle.angle = Math.atan2(-vehicle.speed, curveOffset - vehicle.x + newX) * 180 / Math.PI;
+                } else if (currentMode === 'intersection') {
+                    if (Math.abs(vehicle.angle - 90) < 10) {
+                        // Horizontal movement
+                        newX += vehicle.speed;
+                        
+                        // Loop back when out of view
+                        if (newX > width + 20) {
+                            newX = -20;
+                            newY = height * 0.4 + Math.random() * (height * 0.2);
+                        }
+                    } else {
+                        // Vertical movement
+                        newY -= vehicle.speed;
+                        
+                        // Loop back when out of view
+                        if (newY < -20) {
+                            newY = height + 20;
+                            newX = width * 0.4 + Math.random() * (width * 0.2);
+                        }
+                    }
+                }
+                
+                // Update vehicle position
+                vehicle.x = newX;
+                vehicle.y = newY;
+                vehicle.element.style.left = `${newX}px`;
+                vehicle.element.style.top = `${newY}px`;
+                vehicle.element.style.transform = `translate(-50%, -50%) rotate(${vehicle.angle}deg)`;
+                
+                // Add tracking box if vehicle tracking is enabled
+                if (vehicleTracking.checked) {
+                    // Remove existing tracking box
+                    const existingBox = detectionOverlay.querySelector(`.tracking-box-${vehicle.id}`);
+                    if (existingBox) {
+                        existingBox.remove();
+                    }
+                    
+                    // Add new tracking box
+                    const box = document.createElement('div');
+                    box.className = `tracking-box-${vehicle.id}`;
+                    box.style.position = 'absolute';
+                    box.style.left = `${newX}px`;
+                    box.style.top = `${newY}px`;
+                    box.style.width = '30px';
+                    box.style.height = '50px';
+                    box.style.border = '1px solid #00ff00';
+                    box.style.transform = `translate(-50%, -50%) rotate(${vehicle.angle}deg)`;
+                    box.style.pointerEvents = 'none';
+                    
+                    detectionOverlay.appendChild(box);
+                }
+            });
+        }
+        
+        // Update detection visualization
+        function updateDetection() {
+            const width = roadCanvas.width;
+            const height = roadCanvas.height;
+            
+            // Clear existing detection points
+            detectionPoints.forEach(point => {
+                if (point.element && point.element.parentNode) {
+                    point.element.remove();
+                }
+            });
+            
+            detectionPoints = [];
+            
+            // Add new detection points if lane detection is enabled
+            if (laneDetection.checked) {
+                const pointCount = parseInt(sensitivity.value) * 10;
+                
+                for (let i = 0; i < pointCount; i++) {
+                    let x, y;
+                    
+                    if (currentMode === 'highway') {
+                        // Points along lane markings
+                        const lane = Math.floor(Math.random() * 4);
+                        x = (lane + 0.5) * (width / 4);
+                        y = Math.random() * height;
+                    } else if (currentMode === 'urban') {
+                        // Points along center and edges
+                        const position = Math.floor(Math.random() * 3);
+                        if (position === 0) {
+                            x = width * 0.1;
+                        } else if (position === 1) {
+                            x = width * 0.5;
+                        } else {
+                            x = width * 0.9;
+                        }
+                        y = Math.random() * height;
+                    } else if (currentMode === 'rural') {
+                        // Points along curved road
+                        const progress = Math.random();
+                        y = progress * height;
+                        
+                        const curveOffset = Math.sin(progress * Math.PI) * width * 0.2;
+                        
+                        const position = Math.floor(Math.random() * 3);
+                        if (position === 0) {
+                            x = width * 0.3 + curveOffset;
+                        } else if (position === 1) {
+                            x = width * 0.5 + curveOffset;
+                        } else {
+                            x = width * 0.7 + curveOffset;
+                        }
+                    } else if (currentMode === 'intersection') {
+                        // Points along intersection edges
+                        if (Math.random() > 0.5) {
+                            // Horizontal road
+                            x = Math.random() * width;
+                            const position = Math.floor(Math.random() * 3);
+                            if (position === 0) {
+                                y = height * 0.35;
+                            } else if (position === 1) {
+                                y = height * 0.5;
+                            } else {
+                                y = height * 0.65;
+                            }
+                        } else {
+                            // Vertical road
+                            y = Math.random() * height;
+                            const position = Math.floor(Math.random() * 3);
+                            if (position === 0) {
+                                x = width * 0.35;
+                            } else if (position === 1) {
+                                x = width * 0.5;
+                            } else {
+                                x = width * 0.65;
+                            }
+                        }
+                    }
+                    
+                    // Add some randomness
+                    x += (Math.random() - 0.5) * 5;
+                    y += (Math.random() - 0.5) * 5;
+                    
+                    const point = document.createElement('div');
+                    point.className = 'detection-point';
+                    point.style.left = `${x}px`;
+                    point.style.top = `${y}px`;
+                    
+                    detectionOverlay.appendChild(point);
+                    
+                    detectionPoints.push({
+                        x,
+                        y,
+                        element: point
+                    });
+                }
+            }
+        }
+        
+        // Check for obstacle detection
+        function checkObstacleDetection() {
+            obstacles.forEach(obstacle => {
+                // Simulate detection after some time
+                if (!obstacle.detected && Math.random() < 0.01) {
+                    obstacle.detected = true;
+                    obstacle.element.style.boxShadow = '0 0 0 2px #ff0, 0 0 10px #ff0';
+                    
+                    // Add notification
+                    const notification = document.createElement('div');
+                    notification.className = 'notification';
+                    notification.textContent = 'Obstacle Detected!';
+                    notification.style.left = `${obstacle.x}px`;
+                    notification.style.top = `${obstacle.y - 30}px`;
+                    
+                    detectionOverlay.appendChild(notification);
+                    
+                    // Fade in
+                    setTimeout(() => {
+                        notification.style.opacity = '1';
+                    }, 10);
+                    
+                    // Fade out and remove
+                    setTimeout(() => {
+                        notification.style.opacity = '0';
+                        setTimeout(() => {
+                            if (notification.parentNode) {
+                                notification.remove();
+                            }
+                        }, 300);
+                    }, 2000);
+                    
+                    addLogEntry(`Obstacle detected at (${Math.round(obstacle.x)}, ${Math.round(obstacle.y)})`);
+                    
+                    // Highlight confidence card
+                    document.getElementById('confidence-card').classList.add('highlight');
+                    setTimeout(() => {
+                        document.getElementById('confidence-card').classList.remove('highlight');
+                    }, 1000);
+                }
+            });
+        }
+        
+        // Update metrics with some variation
+        function updateMetrics() {
+            // Update road curvature
+            if (currentMode === 'rural') {
+                roadCurvature = 15 + Math.sin(elapsedTime * 0.2) * 5;
+            } else if (currentMode === 'intersection') {
+                roadCurvature = 90;
+            } else {
+                roadCurvature = Math.sin(elapsedTime * 0.1) * 2;
+            }
+            
+            curvature.textContent = `${Math.abs(roadCurvature).toFixed(1)}°`;
+            
+            // Update confidence with some variation
+            currentConfidence = 90 + Math.sin(elapsedTime * 0.5) * 5;
+            
+            // Reduce confidence in bad weather
+            if (currentWeather === 'rain') {
+                currentConfidence -= 10;
+            } else if (currentWeather === 'fog') {
+                currentConfidence -= 15;
+            } else if (currentWeather === 'night') {
+                currentConfidence -= 5;
+            }
+            
+            confidence.textContent = `${Math.round(currentConfidence)}%`;
+            
+            // Highlight metrics that change significantly
+            if (Math.random() < 0.05) {
+                const cards = [
+                    'road-width-card',
+                    'curvature-card',
+                    'speed-card',
+                    'confidence-card'
+                ];
+                
+                const randomCard = cards[Math.floor(Math.random() * cards.length)];
+                document.getElementById(randomCard).classList.add('highlight');
+                
+                setTimeout(() => {
+                    document.getElementById(randomCard).classList.remove('highlight');
+                }, 1000);
+            }
+        }
+        
+        // Add log entry
+        function addLogEntry(message) {
+            const timeString = formatTime(elapsedTime);
+            
+            const entry = document.createElement('div');
+            entry.className = 'log-entry p-2 border-b border-gray-100 new';
+            entry.innerHTML = `<span class="text-gray-500">[${timeString}]</span> ${message}`;
+            
+            logContainer.insertBefore(entry, logContainer.firstChild);
+            
+            // Remove highlight after a delay
+            setTimeout(() => {
+                entry.classList.remove('new');
+            }, 3000);
+            
+            // Limit log entries
+            const entries = logContainer.querySelectorAll('.log-entry');
+            if (entries.length > 50) {
+                entries[entries.length - 1].remove();
+            }
+        }
+        
+        // Add random log entry
+        function addRandomLogEntry() {
+            const messages = [
+                'Road surface analyzed',
+                'Lane markings detected',
+                'Traffic density analysis complete',
+                'Road curvature updated',
+                'Speed limit sign detected',
+                'Road width measurement updated',
+                'Vehicle tracking active',
+                'System performing normally',
+                'Detection confidence stable',
+                'Environmental conditions assessed'
+            ];
+            
+            const randomMessage = messages[Math.floor(Math.random() * messages.length)];
+            addLogEntry(randomMessage);
+        }
+        
+        // Format time as HH:MM:SS
+        function formatTime(seconds) {
+            const hrs = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            
+            return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+        
+        // Update timer display
+        function updateTimer() {
+            if (isRunning) {
+                elapsedTime += 1;
+            }
+            
+            timeCounter.textContent = formatTime(elapsedTime);
+            setTimeout(updateTimer, 1000);
+        }
+        
+        // Initialize on load
+        window.addEventListener('load', init);
+    </script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'94e6829aa3087fd1',t:'MTc0OTcwMTU0OS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
